@@ -11,7 +11,7 @@ repository = "https://github.com/sergii-ziborov/radiochron-agent"
 [dependencies]
 anyhow = "1"
 serde_json = "1"
-radiochron = { git = "https://github.com/sergii-ziborov/radiochron", rev = "6766fab", default-features = false, features = ["status", "record", "history", "connectivity"] }
+radiochron = { git = "https://github.com/sergii-ziborov/radiochron", rev = "9df3dc7", default-features = false, features = ["status", "record", "history", "connectivity"] }
 
 [profile.release]
 lto = "thin"
