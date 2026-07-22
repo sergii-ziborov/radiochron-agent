@@ -1,11 +1,11 @@
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
 use serde_json::Value;
 
 use super::Exporter;
+use crate::transport::{split_host_port, BoxedIo, TlsConnector};
 
 pub struct MqttExporter {
     host: String,
@@ -14,7 +14,9 @@ pub struct MqttExporter {
     client_id: String,
     timeout: Duration,
     next_packet_id: u16,
-    stream: Option<TcpStream>,
+    tls: bool,
+    connector: TlsConnector,
+    stream: Option<BoxedIo>,
 }
 
 impl MqttExporter {
@@ -23,21 +25,16 @@ impl MqttExporter {
         topic: String,
         device_id: &str,
         timeout: Duration,
+        connector: TlsConnector,
     ) -> anyhow::Result<Self> {
-        let authority = url
-            .strip_prefix("mqtt://")
-            .context("MQTT URL must use mqtt:// (use a local TLS broker/bridge for TLS)")?
-            .trim_end_matches('/');
-        let (host, port) = authority
-            .rsplit_once(':')
-            .map(|(host, port)| {
-                Ok::<_, anyhow::Error>((
-                    host.to_string(),
-                    port.parse().context("invalid MQTT port")?,
-                ))
-            })
-            .transpose()?
-            .unwrap_or_else(|| (authority.to_string(), 1883));
+        let (tls, authority, default_port) = if let Some(authority) = url.strip_prefix("mqtts://") {
+            (true, authority, 8883)
+        } else if let Some(authority) = url.strip_prefix("mqtt://") {
+            (false, authority, 1883)
+        } else {
+            bail!("MQTT URL must use mqtt:// or mqtts://");
+        };
+        let (host, port) = split_host_port(authority.trim_end_matches('/'), default_port)?;
         if host.is_empty() || topic.is_empty() {
             bail!("MQTT host and topic must not be empty");
         }
@@ -48,14 +45,16 @@ impl MqttExporter {
             client_id: format!("radiochron-{}", safe_id(device_id)),
             timeout,
             next_packet_id: 1,
+            tls,
+            connector,
             stream: None,
         })
     }
 
-    fn connect(&self) -> anyhow::Result<TcpStream> {
-        let mut stream = TcpStream::connect((&*self.host, self.port))?;
-        stream.set_read_timeout(Some(self.timeout))?;
-        stream.set_write_timeout(Some(self.timeout))?;
+    fn connect(&self) -> anyhow::Result<BoxedIo> {
+        let mut stream = self
+            .connector
+            .connect(&self.host, self.port, self.tls, self.timeout)?;
         let mut body = Vec::new();
         push_utf8(&mut body, "MQTT")?;
         body.extend([4, 2, 0, 30]); // MQTT 3.1.1, clean session, 30 s keepalive
@@ -112,7 +111,7 @@ fn push_utf8(output: &mut Vec<u8>, value: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn write_packet(stream: &mut TcpStream, header: u8, body: &[u8]) -> anyhow::Result<()> {
+fn write_packet<S: Write + ?Sized>(stream: &mut S, header: u8, body: &[u8]) -> anyhow::Result<()> {
     stream.write_all(&[header])?;
     let mut remaining = body.len();
     loop {
@@ -131,7 +130,7 @@ fn write_packet(stream: &mut TcpStream, header: u8, body: &[u8]) -> anyhow::Resu
     Ok(())
 }
 
-fn read_packet(stream: &mut TcpStream) -> anyhow::Result<(u8, Vec<u8>)> {
+fn read_packet<S: Read + ?Sized>(stream: &mut S) -> anyhow::Result<(u8, Vec<u8>)> {
     let mut header = [0u8; 1];
     stream.read_exact(&mut header)?;
     let mut multiplier = 1usize;
@@ -168,6 +167,10 @@ fn safe_id(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn tls() -> TlsConnector {
+        TlsConnector::new(&crate::transport::TlsConfig::default()).unwrap()
+    }
+
     #[test]
     fn parses_default_port_and_sanitizes_client_id() {
         let exporter = MqttExporter::new(
@@ -175,6 +178,7 @@ mod tests {
             "radiochron/events".into(),
             "lab/device 1",
             Duration::from_secs(1),
+            tls(),
         )
         .unwrap();
         assert_eq!(exporter.port, 1883);
@@ -182,14 +186,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_tls_scheme_without_silent_downgrade() {
-        assert!(MqttExporter::new(
-            "mqtts://broker",
+    fn accepts_tls_scheme_on_the_standard_port() {
+        let exporter = MqttExporter::new(
+            "mqtts://broker.lan",
             "events".into(),
             "device",
-            Duration::from_secs(1)
+            Duration::from_secs(1),
+            tls(),
         )
-        .is_err());
+        .unwrap();
+        assert!(exporter.tls);
+        assert_eq!(exporter.port, 8883);
     }
 
     #[test]
@@ -215,6 +222,7 @@ mod tests {
             "radiochron/events".into(),
             "device",
             Duration::from_secs(1),
+            tls(),
         )
         .unwrap();
         exporter

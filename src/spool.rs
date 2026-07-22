@@ -39,6 +39,9 @@ impl Spool {
         let state_dir = root.join("state");
         std::fs::create_dir_all(&events_dir)?;
         std::fs::create_dir_all(&state_dir)?;
+        crate::private_fs::restrict_directory(root)?;
+        crate::private_fs::restrict_directory(&events_dir)?;
+        crate::private_fs::restrict_directory(&state_dir)?;
         let spool = Self {
             events_dir,
             state_dir,
@@ -50,10 +53,12 @@ impl Spool {
     }
 
     pub fn sink(&self, boot_id: &str) -> io::Result<SpoolSink> {
+        let sequence_path = self.sequence_path(boot_id);
         let sequence = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(self.sequence_path(boot_id))?;
+            .open(&sequence_path)?;
+        crate::private_fs::restrict_file(&sequence_path)?;
         Ok(SpoolSink {
             spool: self.clone(),
             sequence,
@@ -153,6 +158,7 @@ impl Spool {
             .create_new(true)
             .write(true)
             .open(&temp)?;
+        crate::private_fs::restrict_file(&temp)?;
         file.write_all(&raw)?;
         file.sync_all()?;
         drop(file);

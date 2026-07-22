@@ -4,12 +4,14 @@ After=network.target
 
 [Service]
 Type=simple
+ExecStartPre=/usr/local/bin/radiochron-agent-update reconcile --state-dir /var/lib/radiochron-agent/spool/state/fleet
 ExecStart=/usr/local/bin/radiochron-agent
 EnvironmentFile=-/etc/radiochron-agent.env
 StateDirectory=radiochron-agent
 User=radiochron
 Group=radiochron
 Restart=on-failure
+RestartForceExitStatus=1 75
 RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
@@ -21,4 +23,3 @@ CapabilityBoundingSet=CAP_NET_ADMIN
 
 [Install]
 WantedBy=multi-user.target
-

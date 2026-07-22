@@ -1,22 +1,24 @@
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::time::Duration;
 
-use anyhow::{bail, Context};
+use anyhow::bail;
 use serde_json::{json, Value};
 
 use super::Exporter;
+use crate::http::HttpEndpoint;
+use crate::transport::TlsConnector;
 
 pub struct OtlpExporter {
     endpoint: HttpEndpoint,
     timeout: Duration,
+    connector: TlsConnector,
 }
 
 impl OtlpExporter {
-    pub fn new(url: &str, timeout: Duration) -> anyhow::Result<Self> {
+    pub fn new(url: &str, timeout: Duration, connector: TlsConnector) -> anyhow::Result<Self> {
         Ok(Self {
-            endpoint: HttpEndpoint::parse(url)?,
+            endpoint: HttpEndpoint::parse(url, "/v1/logs")?,
             timeout,
+            connector,
         })
     }
 }
@@ -59,64 +61,15 @@ impl Exporter for OtlpExporter {
                 }]
             }]
         }))?;
-        self.endpoint.post(&body, self.timeout)
-    }
-}
-
-struct HttpEndpoint {
-    host: String,
-    port: u16,
-    path: String,
-}
-
-impl HttpEndpoint {
-    fn parse(url: &str) -> anyhow::Result<Self> {
-        let rest = url
-            .strip_prefix("http://")
-            .context("OTLP endpoint must use http:// (use a local TLS proxy for HTTPS)")?;
-        let (authority, path) = rest
-            .split_once('/')
-            .map(|(authority, path)| (authority, format!("/{path}")))
-            .unwrap_or((rest, "/v1/logs".to_string()));
-        let (host, port) = authority
-            .rsplit_once(':')
-            .map(|(host, port)| {
-                Ok::<_, anyhow::Error>((
-                    host.to_string(),
-                    port.parse().context("invalid OTLP port")?,
-                ))
-            })
-            .transpose()?
-            .unwrap_or_else(|| (authority.to_string(), 80));
-        if host.is_empty() {
-            bail!("OTLP endpoint host is empty");
-        }
-        Ok(Self { host, port, path })
-    }
-
-    fn post(&self, body: &[u8], timeout: Duration) -> anyhow::Result<()> {
-        let mut stream = TcpStream::connect((&*self.host, self.port))?;
-        stream.set_read_timeout(Some(timeout))?;
-        stream.set_write_timeout(Some(timeout))?;
-        write!(
-            stream,
-            "POST {} HTTP/1.1\r\nHost: {}:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            self.path,
-            self.host,
-            self.port,
-            body.len()
+        let response = self.endpoint.request(
+            "POST",
+            &[("Content-Type", "application/json")],
+            &body,
+            self.timeout,
+            &self.connector,
         )?;
-        stream.write_all(body)?;
-        stream.flush()?;
-        let mut response = Vec::new();
-        stream.read_to_end(&mut response)?;
-        let status = response
-            .split(|byte| *byte == b'\n')
-            .next()
-            .and_then(|line| std::str::from_utf8(line).ok())
-            .unwrap_or("invalid response");
-        if !(status.contains(" 200 ") || status.contains(" 202 ")) {
-            bail!("OTLP endpoint returned {status}");
+        if !matches!(response.status, 200 | 202) {
+            bail!("OTLP endpoint returned HTTP {}", response.status);
         }
         Ok(())
     }
@@ -125,19 +78,26 @@ impl HttpEndpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+
+    fn tls() -> TlsConnector {
+        TlsConnector::new(&crate::transport::TlsConfig::default()).unwrap()
+    }
 
     #[test]
     fn parses_default_and_explicit_paths() {
-        let default = HttpEndpoint::parse("http://127.0.0.1:4318").unwrap();
+        let default = HttpEndpoint::parse("http://127.0.0.1:4318", "/v1/logs").unwrap();
         assert_eq!(default.port, 4318);
         assert_eq!(default.path, "/v1/logs");
-        let explicit = HttpEndpoint::parse("http://collector:80/custom").unwrap();
+        let explicit = HttpEndpoint::parse("http://collector:80/custom", "/v1/logs").unwrap();
         assert_eq!(explicit.path, "/custom");
     }
 
     #[test]
-    fn rejects_https_until_a_tls_backend_is_configured() {
-        assert!(HttpEndpoint::parse("https://collector/v1/logs").is_err());
+    fn accepts_https_without_downgrading_the_scheme() {
+        let endpoint = HttpEndpoint::parse("https://collector/v1/logs", "/v1/logs").unwrap();
+        assert!(endpoint.tls);
+        assert_eq!(endpoint.port, 443);
     }
 
     #[test]
@@ -174,9 +134,12 @@ mod tests {
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .unwrap();
         });
-        let mut exporter =
-            OtlpExporter::new(&format!("http://{address}/v1/logs"), Duration::from_secs(1))
-                .unwrap();
+        let mut exporter = OtlpExporter::new(
+            &format!("http://{address}/v1/logs"),
+            Duration::from_secs(1),
+            tls(),
+        )
+        .unwrap();
         let entry = json!({
             "event_id":"device:boot:1",
             "device_id":"device",

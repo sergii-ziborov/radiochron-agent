@@ -16,7 +16,7 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-15, macos-15-intel]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -32,6 +32,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.78.0
+      - uses: dtolnay/rust-toolchain@1.80.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-targets

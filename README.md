@@ -2,8 +2,8 @@
 
 Lightweight daemon for the [RadioChron](https://github.com/sergii-ziborov/radiochron)
 Wi-Fi diagnostics engine. It records locally first, survives exporter outages,
-and runs on Linux/nl80211 or Windows without adding transport dependencies to
-the core library.
+and runs on Linux/nl80211, Windows, or macOS/CoreWLAN without adding transport
+dependencies to the core library.
 
 This repository is intentionally separate from the core, MCP server, npm
 launcher and website. The agent pins an exact RadioChron commit so its stored
@@ -12,7 +12,7 @@ schema and collector behavior are reproducible.
 ## Data path
 
 ```text
-WLAN API / nl80211 -> generic Collector -> versioned chronicle entry
+WLAN API / nl80211 / CoreWLAN -> generic Collector -> versioned chronicle entry
                                       -> atomic disk spool
                                       -> MQTT QoS 1 and/or OTLP/HTTP JSON
                                       -> Prometheus /metrics (aggregate state)
@@ -33,7 +33,7 @@ that is still in the spool.
 
 ```bash
 cargo build --release
-sudo install -m 0755 target/release/radiochron-agent /usr/local/bin/
+sudo install -m 0755 target/release/radiochron-agent target/release/radiochron-agent-update /usr/local/bin/
 
 RADIOCHRON_DEVICE_ID=gateway-17 \
 RADIOCHRON_SPOOL_DIR=./data/spool \
@@ -53,20 +53,24 @@ exporter is explicitly configured.
 | Variable | Default | Meaning |
 |---|---:|---|
 | `RADIOCHRON_DEVICE_ID` | `/etc/machine-id` or hostname | Stable fleet device identity |
-| `RADIOCHRON_BOOT_ID` | Linux kernel boot ID, else process session | Override boot identity |
+| `RADIOCHRON_BOOT_ID` | Linux boot ID, macOS boot time, else process session | Override boot identity |
 | `RADIOCHRON_CLOCK_QUALITY` | `unknown` | `synchronized`, `unsynchronized`, or `unknown` |
-| `RADIOCHRON_SPOOL_DIR` | `/var/lib/radiochron-agent/spool` on Linux | Durable queue root |
+| `RADIOCHRON_SPOOL_DIR` | `/var/lib/radiochron-agent/spool` on Linux; user Application Support on macOS | Durable queue root |
 | `RADIOCHRON_SPOOL_MAX_BYTES` | `67108864` | Event-file ceiling; at least one event is retained |
 | `RADIOCHRON_POLL_SECONDS` | `5` | Native collector interval |
-| `RADIOCHRON_MQTT_URL` | unset | `mqtt://host:port` enables MQTT 3.1.1 QoS 1 |
+| `RADIOCHRON_MQTT_URL` | unset | `mqtt://` or `mqtts://` MQTT 3.1.1 QoS 1 endpoint |
 | `RADIOCHRON_MQTT_TOPIC` | `radiochron/<device>/chronicle` | Event topic |
-| `RADIOCHRON_OTLP_ENDPOINT` | unset | `http://host:4318/v1/logs` enables OTLP Logs JSON |
+| `RADIOCHRON_OTLP_ENDPOINT` | unset | `http://` or `https://` OTLP Logs JSON endpoint |
 | `RADIOCHRON_PROMETHEUS_BIND` | unset | Address for pull metrics, e.g. `127.0.0.1:9898` |
+| `RADIOCHRON_TLS_CA_FILE` | system roots | Additional PEM CA bundle |
+| `RADIOCHRON_TLS_CLIENT_CERT_FILE` | unset | PEM client certificate/chain for mTLS |
+| `RADIOCHRON_TLS_CLIENT_KEY_FILE` | unset | Matching unencrypted PKCS#8 PEM key |
+| `RADIOCHRON_TLS_SERVER_NAME` | endpoint host | Optional SNI/certificate-name override |
 
-MQTT and OTLP intentionally accept plain local transports only. For production
-TLS, put the agent behind a local authenticated broker/OTel Collector sidecar
-or TLS proxy; `mqtts://` and `https://` are rejected rather than silently
-downgraded. Credentials are therefore not embedded in URLs or spool files.
+TLS is built in: SChannel on Windows, Secure Transport on Apple, and OpenSSL on
+Linux. Server certificates and names are always validated. Supplying both
+client files enables mTLS; supplying only one is a configuration error. There
+is no insecure/skip-verification switch and schemes are never downgraded.
 
 ### Connectivity diagnosis
 
@@ -78,13 +82,40 @@ Set any of these to record the full network chain at
 | `RADIOCHRON_DNS_NAME` | `broker.lan` | DNS resolver |
 | `RADIOCHRON_TCP_TARGET` | `broker.lan:1883` | LAN/application TCP |
 | `RADIOCHRON_INTERNET_TARGET` | `health.example.net:443` | Explicit Internet reachability |
+| `RADIOCHRON_CAPTIVE_PORTAL_URL` | `http://gateway.lan/generate_204` | Redirect/interception sentinel |
+| `RADIOCHRON_TLS_TARGET` | `broker.lan:8883` | TLS certificate/name/handshake validation |
+| `RADIOCHRON_QUALITY_TARGET` | `broker.lan:8883` | Repeated TCP loss and jitter sampling |
+| `RADIOCHRON_QUALITY_ATTEMPTS` | `4` | Samples per quality diagnosis (1..20 in core) |
 | `RADIOCHRON_CONNECTIVITY_TIMEOUT_MS` | `3000` | Per-target timeout |
 
-Radio availability, AP authentication/association, IP configuration, DNS, TCP
-and Internet are reported separately. The portable IP stage is named `dhcp`
-for the operational layer, but its evidence explicitly states that it cannot
-distinguish a DHCP lease from a static address without a platform-specific
-lease database.
+Radio, authentication/association, exact IP assignment evidence, gateway, DNS,
+TCP, captive portal, TLS certificate, packet-quality and Internet are reported
+separately. Windows uses IP Helper's DHCP flag, macOS uses
+SystemConfiguration, and Linux corroborates active lease/profile state. Linux
+returns `unknown` when it cannot prove DHCP or static instead of guessing.
+
+### Fleet enrollment, profiles, alarms and OTA
+
+Point the agent at `radiochron-fleet` with:
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `RADIOCHRON_FLEET_URL` | unset | Fleet base URL; HTTPS is mandatory outside loopback |
+| `RADIOCHRON_FLEET_ENROLL_TOKEN` | unset | One-time/bootstrap enrollment token |
+| `RADIOCHRON_FLEET_POLL_SECONDS` | `60` | Desired-state and heartbeat interval |
+
+Enrollment returns a per-device token plus the fleet Ed25519 public key. Every
+desired profile is verified before it can change collector/exporter settings.
+The signed envelope also covers the OTA manifest; the artifact is downloaded
+over HTTPS and checked against its SHA-256 digest. The separate updater swaps
+the executable before service start and keeps the prior executable. If the new
+agent does not write its health marker within the manifest timeout/retry
+budget, the updater restores the previous binary. TLS trust material and fleet
+credentials are deliberately not mutable through profiles.
+
+On Unix systems the spool, per-device credential and fleet signing state are
+created with owner-only directory/file permissions. Downloaded OTA artifacts
+receive an owner execute bit before the atomic swap.
 
 Prometheus exposes counters for recorded/exported/failed/dropped events, spool
 depth, and `radiochron_connectivity_stage{layer=...}`. Stage values are `1`
@@ -105,6 +136,50 @@ Put environment assignments in `/etc/radiochron-agent.env`. The unit uses
 `StateDirectory=radiochron-agent`, filesystem hardening, automatic restart and
 only `CAP_NET_ADMIN`, which nl80211 drivers may require.
 
+## macOS background service
+
+Recent macOS versions gate Wi-Fi SSID/BSSID and scan identity behind Location
+Services. Apple does not grant that privacy permission to a system
+LaunchDaemon, so full radio evidence must run as a per-user LaunchAgent. Build
+an app bundle, request permission once in the logged-in session, then install
+the supplied LaunchAgent:
+
+```bash
+sudo mkdir -p "/Applications/RadioChron Agent.app/Contents/MacOS"
+sudo cp packaging/macos/Info.plist "/Applications/RadioChron Agent.app/Contents/Info.plist"
+sudo install -m 0755 target/release/radiochron-agent target/release/radiochron-agent-update \
+  "/Applications/RadioChron Agent.app/Contents/MacOS/"
+sudo codesign --force --deep --sign - "/Applications/RadioChron Agent.app"
+"/Applications/RadioChron Agent.app/Contents/MacOS/radiochron-agent" --request-location
+mkdir -p ~/Library/LaunchAgents
+cp packaging/io.radiochron.agent.user.plist ~/Library/LaunchAgents/io.radiochron.agent.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.radiochron.agent.plist
+```
+
+For a future signed distribution, replace the ad-hoc signature with a stable
+Developer ID signature so the TCC identity survives upgrades. Edit the plist's
+`EnvironmentVariables` dictionary to supply exporter/fleet settings before
+bootstrap.
+
+The system LaunchDaemon remains useful on a headless Mac for IP/gateway,
+DNS/TCP/Internet, TLS, packet-quality and exporter health, but Apple may redact
+SSID/BSSID and scan results:
+
+Build both binaries on macOS, create the state/log directories, then install
+the supplied Apple plist:
+
+```bash
+sudo mkdir -p "/Library/Application Support/RadioChron/spool/state/fleet" /Library/Logs/RadioChron
+sudo install -m 0755 target/release/radiochron-agent target/release/radiochron-agent-update /usr/local/bin/
+sudo install -m 0644 packaging/io.radiochron.agent.plist /Library/LaunchDaemons/
+sudo launchctl bootstrap system /Library/LaunchDaemons/io.radiochron.agent.plist
+```
+
+Both service definitions run the updater as a small supervisor so replacement
+and rollback happen while the agent executable is not open. CoreWLAN status
+and scan use Apple's public `CWWiFiClient` API; no `airport` or
+`system_profiler` shell-out is involved.
+
 ## Development
 
 ```bash
@@ -113,7 +188,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-MSRV is Rust 1.78. This repository has not been released yet.
+MSRV is Rust 1.80. This repository has not been released yet.
 
 ## License
 

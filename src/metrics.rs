@@ -16,7 +16,21 @@ pub struct Metrics {
     dhcp: AtomicI64,
     dns: AtomicI64,
     tcp: AtomicI64,
+    gateway: AtomicI64,
+    captive_portal: AtomicI64,
+    tls: AtomicI64,
+    packet_quality: AtomicI64,
     internet: AtomicI64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct MetricsSnapshot {
+    pub events_recorded: u64,
+    pub events_exported: u64,
+    pub export_failures: u64,
+    pub spool_dropped: u64,
+    pub spool_depth: u64,
+    pub stages: std::collections::BTreeMap<&'static str, i64>,
 }
 
 impl Default for Metrics {
@@ -32,6 +46,10 @@ impl Default for Metrics {
             dhcp: AtomicI64::new(-1),
             dns: AtomicI64::new(-1),
             tcp: AtomicI64::new(-1),
+            gateway: AtomicI64::new(-1),
+            captive_portal: AtomicI64::new(-1),
+            tls: AtomicI64::new(-1),
+            packet_quality: AtomicI64::new(-1),
             internet: AtomicI64::new(-1),
         }
     }
@@ -48,6 +66,13 @@ impl Metrics {
             self.dhcp.store(code(report.dhcp.status), Ordering::Relaxed);
             self.dns.store(code(report.dns.status), Ordering::Relaxed);
             self.tcp.store(code(report.tcp.status), Ordering::Relaxed);
+            self.gateway
+                .store(code(report.gateway.status), Ordering::Relaxed);
+            self.captive_portal
+                .store(code(report.captive_portal.status), Ordering::Relaxed);
+            self.tls.store(code(report.tls.status), Ordering::Relaxed);
+            self.packet_quality
+                .store(code(report.packet_quality.status), Ordering::Relaxed);
             self.internet
                 .store(code(report.internet.status), Ordering::Relaxed);
         }
@@ -109,6 +134,16 @@ impl Metrics {
             ("dhcp", self.dhcp.load(Ordering::Relaxed)),
             ("dns", self.dns.load(Ordering::Relaxed)),
             ("tcp", self.tcp.load(Ordering::Relaxed)),
+            ("gateway", self.gateway.load(Ordering::Relaxed)),
+            (
+                "captive_portal",
+                self.captive_portal.load(Ordering::Relaxed),
+            ),
+            ("tls", self.tls.load(Ordering::Relaxed)),
+            (
+                "packet_quality",
+                self.packet_quality.load(Ordering::Relaxed),
+            ),
             ("internet", self.internet.load(Ordering::Relaxed)),
         ] {
             let _ = writeln!(
@@ -117,6 +152,39 @@ impl Metrics {
             );
         }
         out
+    }
+
+    pub fn snapshot(&self) -> MetricsSnapshot {
+        MetricsSnapshot {
+            events_recorded: self.events_recorded.load(Ordering::Relaxed),
+            events_exported: self.events_exported.load(Ordering::Relaxed),
+            export_failures: self.export_failures.load(Ordering::Relaxed),
+            spool_dropped: self.spool_dropped.load(Ordering::Relaxed),
+            spool_depth: self.spool_depth.load(Ordering::Relaxed),
+            stages: [
+                ("radio", self.radio.load(Ordering::Relaxed)),
+                (
+                    "authentication",
+                    self.authentication.load(Ordering::Relaxed),
+                ),
+                ("dhcp", self.dhcp.load(Ordering::Relaxed)),
+                ("gateway", self.gateway.load(Ordering::Relaxed)),
+                ("dns", self.dns.load(Ordering::Relaxed)),
+                ("tcp", self.tcp.load(Ordering::Relaxed)),
+                (
+                    "captive_portal",
+                    self.captive_portal.load(Ordering::Relaxed),
+                ),
+                ("tls", self.tls.load(Ordering::Relaxed)),
+                (
+                    "packet_quality",
+                    self.packet_quality.load(Ordering::Relaxed),
+                ),
+                ("internet", self.internet.load(Ordering::Relaxed)),
+            ]
+            .into_iter()
+            .collect(),
+        }
     }
 }
 
