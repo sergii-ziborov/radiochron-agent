@@ -5,9 +5,15 @@ Wi-Fi diagnostics engine. It records locally first, survives exporter outages,
 and runs on Linux/nl80211, Windows, or macOS/CoreWLAN without adding transport
 dependencies to the core library.
 
-This repository is intentionally separate from the core, MCP server, npm
-launcher and website. The agent pins an exact RadioChron commit so its stored
+This repository is intentionally separate from the core, MCP server, Node/npm
+library, desktop app, fleet control plane, and website. The agent pins an exact RadioChron commit so its stored
 schema and collector behavior are reproducible.
+
+`radiochron-agent` is the unattended IoT/fleet service. Interactive desktop use
+lives in [`radiochron-electron`](https://github.com/sergii-ziborov/radiochron-electron),
+which consumes the separate
+[`radiochron-js`](https://github.com/sergii-ziborov/radiochron-js) Node library;
+neither is an agent dependency.
 
 ## Data path
 
