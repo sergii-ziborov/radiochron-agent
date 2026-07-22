@@ -1,0 +1,18 @@
+[package]
+name = "radiochron-agent"
+description = "Lightweight RadioChron collector daemon with durable offline spool and MQTT, OTLP/HTTP, and Prometheus export"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+authors = ["Sergii Ziborov"]
+license = "MIT"
+repository = "https://github.com/sergii-ziborov/radiochron-agent"
+
+[dependencies]
+anyhow = "1"
+serde_json = "1"
+radiochron = { git = "https://github.com/sergii-ziborov/radiochron", rev = "6766fab", default-features = false, features = ["status", "record", "history", "connectivity"] }
+
+[profile.release]
+lto = "thin"
+strip = true

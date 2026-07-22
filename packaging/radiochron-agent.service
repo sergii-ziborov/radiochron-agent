@@ -1,0 +1,24 @@
+[Unit]
+Description=RadioChron Wi-Fi telemetry agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/radiochron-agent
+EnvironmentFile=-/etc/radiochron-agent.env
+StateDirectory=radiochron-agent
+User=radiochron
+Group=radiochron
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/radiochron-agent
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target
+
