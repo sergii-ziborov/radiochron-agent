@@ -221,7 +221,7 @@ mod tests {
             &format!("mqtt://{address}"),
             "radiochron/events".into(),
             "device",
-            Duration::from_secs(1),
+            Duration::from_secs(10),
             tls(),
         )
         .unwrap();
