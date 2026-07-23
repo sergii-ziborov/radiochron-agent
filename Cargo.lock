@@ -376,8 +376,8 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "radiochron"
-version = "0.2.0"
-source = "git+https://github.com/sergii-ziborov/radiochron?rev=f9208c8#f9208c814646c75fca3d1aa1df3606da87b8671c"
+version = "0.3.0"
+source = "git+https://github.com/sergii-ziborov/radiochron?rev=c5c3b4c30b5395b2c8cbc459f4e85982e5fdbb4a#c5c3b4c30b5395b2c8cbc459f4e85982e5fdbb4a"
 dependencies = [
  "anyhow",
  "serde",
