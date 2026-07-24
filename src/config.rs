@@ -5,6 +5,7 @@ use anyhow::{bail, Context};
 use radiochron::chronicle::ClockQuality;
 use radiochron::connectivity::ConnectivityConfig;
 
+use crate::ble_collector::BleOptions;
 use crate::transport::TlsConfig;
 
 #[derive(Debug, Clone)]
@@ -17,6 +18,7 @@ pub struct Config {
     pub poll_interval: Duration,
     pub connectivity_interval: Duration,
     pub connectivity: Option<ConnectivityConfig>,
+    pub ble: Option<BleOptions>,
     pub mqtt_url: Option<String>,
     pub mqtt_topic: String,
     pub otlp_endpoint: Option<String>,
@@ -87,6 +89,20 @@ impl Config {
                 .context("RADIOCHRON_QUALITY_ATTEMPTS must fit a u8")?,
             timeout: connectivity_timeout,
         });
+        let ble_scan_seconds = env_u64("RADIOCHRON_BLE_SCAN_SECONDS", 0)?;
+        let ble_window_ms = env_u64("RADIOCHRON_BLE_WINDOW_MS", 4_000)?;
+        if !(500..=30_000).contains(&ble_window_ms) {
+            bail!("RADIOCHRON_BLE_WINDOW_MS must be between 500 and 30000");
+        }
+        let ble_sensor_is_moving = env_bool("RADIOCHRON_BLE_SENSOR_MOVING", false)?;
+        let ble = (ble_scan_seconds > 0).then(|| BleOptions {
+            interval: Duration::from_secs(ble_scan_seconds),
+            window: Duration::from_millis(ble_window_ms),
+            sensor_id: device_id.clone(),
+            zone: env_nonempty("RADIOCHRON_BLE_ZONE"),
+            movement_session: env_nonempty("RADIOCHRON_BLE_MOVEMENT_SESSION"),
+            sensor_is_moving: ble_sensor_is_moving,
+        });
 
         Ok(Self {
             device_id: device_id.clone(),
@@ -105,6 +121,7 @@ impl Config {
             poll_interval,
             connectivity_interval,
             connectivity,
+            ble,
             mqtt_url: env_nonempty("RADIOCHRON_MQTT_URL"),
             mqtt_topic: env_nonempty("RADIOCHRON_MQTT_TOPIC")
                 .unwrap_or_else(|| format!("radiochron/{device_id}/chronicle")),
@@ -191,6 +208,60 @@ impl Config {
         if connectivity_changed {
             self.connectivity = Some(connectivity);
         }
+        if object.contains_key("ble_scan_seconds") {
+            let seconds = object
+                .get("ble_scan_seconds")
+                .and_then(serde_json::Value::as_u64)
+                .context("fleet ble_scan_seconds must be an unsigned integer")?;
+            if seconds == 0 {
+                self.ble = None;
+            } else {
+                let options = self.ble.get_or_insert_with(|| BleOptions {
+                    interval: Duration::from_secs(seconds),
+                    window: Duration::from_millis(4_000),
+                    sensor_id: self.device_id.clone(),
+                    zone: None,
+                    movement_session: None,
+                    sensor_is_moving: false,
+                });
+                options.interval = Duration::from_secs(seconds);
+            }
+        }
+        if object.contains_key("ble_window_ms") {
+            let window_ms = object
+                .get("ble_window_ms")
+                .and_then(serde_json::Value::as_u64)
+                .context("fleet ble_window_ms must be an unsigned integer")?;
+            if !(500..=30_000).contains(&window_ms) {
+                bail!("fleet ble_window_ms must be between 500 and 30000");
+            }
+            self.ble
+                .as_mut()
+                .context("fleet ble_window_ms requires BLE collection to be enabled")?
+                .window = Duration::from_millis(window_ms);
+        }
+        if object.contains_key("ble_zone") {
+            self.ble
+                .as_mut()
+                .context("fleet ble_zone requires BLE collection")?
+                .zone = string("ble_zone")?;
+        }
+        if object.contains_key("ble_movement_session") {
+            self.ble
+                .as_mut()
+                .context("fleet ble_movement_session requires BLE collection")?
+                .movement_session = string("ble_movement_session")?;
+        }
+        if object.contains_key("ble_sensor_moving") {
+            let moving = object
+                .get("ble_sensor_moving")
+                .and_then(serde_json::Value::as_bool)
+                .context("fleet ble_sensor_moving must be a boolean")?;
+            self.ble
+                .as_mut()
+                .context("fleet ble_sensor_moving requires BLE collection")?
+                .sensor_is_moving = moving;
+        }
         Ok(())
     }
 }
@@ -207,6 +278,15 @@ fn env_u64(name: &str, default: u64) -> anyhow::Result<u64> {
         Some(value) => value
             .parse()
             .with_context(|| format!("{name} must be an unsigned integer")),
+        None => Ok(default),
+    }
+}
+
+fn env_bool(name: &str, default: bool) -> anyhow::Result<bool> {
+    match env_nonempty(name).as_deref() {
+        Some("1" | "true" | "yes") => Ok(true),
+        Some("0" | "false" | "no") => Ok(false),
+        Some(value) => bail!("{name} must be true/false, yes/no, or 1/0; got {value}"),
         None => Ok(default),
     }
 }
@@ -322,4 +402,59 @@ fn macos_boot_id() -> Option<String> {
         )
     };
     (result == 0 && boot.seconds > 0).then(|| format!("boot-{}", boot.seconds))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> Config {
+        Config {
+            device_id: "device".into(),
+            boot_id: "boot".into(),
+            clock_quality: ClockQuality::Unknown,
+            spool_dir: std::env::temp_dir(),
+            spool_max_bytes: 1_024,
+            poll_interval: Duration::from_secs(5),
+            connectivity_interval: Duration::from_secs(30),
+            connectivity: None,
+            ble: None,
+            mqtt_url: None,
+            mqtt_topic: "radiochron/device/chronicle".into(),
+            otlp_endpoint: None,
+            prometheus_bind: None,
+            tls: TlsConfig {
+                ca_file: None,
+                client_cert_file: None,
+                client_key_file: None,
+                server_name: None,
+            },
+            fleet_url: None,
+            fleet_enroll_token: None,
+            fleet_poll_interval: Duration::from_secs(60),
+        }
+    }
+
+    #[test]
+    fn signed_profile_can_enable_configure_and_disable_ble() {
+        let mut config = config();
+        config
+            .apply_profile(&serde_json::json!({
+                "ble_scan_seconds": 30,
+                "ble_window_ms": 750,
+                "ble_zone": "dock",
+                "ble_sensor_moving": true
+            }))
+            .unwrap();
+        let ble = config.ble.as_ref().unwrap();
+        assert_eq!(ble.interval, Duration::from_secs(30));
+        assert_eq!(ble.window, Duration::from_millis(750));
+        assert_eq!(ble.zone.as_deref(), Some("dock"));
+        assert!(ble.sensor_is_moving);
+
+        config
+            .apply_profile(&serde_json::json!({"ble_scan_seconds": 0}))
+            .unwrap();
+        assert!(config.ble.is_none());
+    }
 }

@@ -6,8 +6,9 @@ and runs on Linux/nl80211, Windows, or macOS/CoreWLAN without adding transport
 dependencies to the core library.
 
 This repository is intentionally separate from the core, MCP server, Node/npm
-library, desktop app, fleet control plane, and website. The agent pins an exact RadioChron commit so its stored
-schema and collector behavior are reproducible.
+library, desktop app, fleet control plane, and website. The agent pins an exact
+published RadioChron crate version and commits its Cargo.lock so stored schema
+and collector behavior are reproducible.
 
 `radiochron-agent` is the unattended IoT/fleet service. Interactive desktop use
 lives in [`radiochron-electron`](https://github.com/sergii-ziborov/radiochron-electron),
@@ -18,11 +19,17 @@ neither is an agent dependency.
 ## Data path
 
 ```text
-WLAN API / nl80211 / CoreWLAN -> generic Collector -> versioned chronicle entry
-                                      -> atomic disk spool
-                                      -> MQTT QoS 1 and/or OTLP/HTTP JSON
-                                      -> Prometheus /metrics (aggregate state)
+WLAN API / nl80211 / CoreWLAN ----\
+                                   -> generic Collector -> versioned chronicle entry
+WinRT / BlueZ / CoreBluetooth ----/                         -> atomic disk spool
+                                                             -> MQTT QoS 1 and/or OTLP/HTTP JSON
+                                                             -> Prometheus /metrics (aggregate state)
 ```
+
+Optional BLE collection uses the host Bluetooth stack through WinRT, BlueZ, or
+CoreBluetooth. Raw advertisement addresses and payload bytes are processed in
+memory but never written to the chronicle; persisted events contain only the
+RadioChron identity, payload hash, RSSI, sensor ID, and evidence-based findings.
 
 The spool is the first write. An event is deleted only after every configured
 event exporter acknowledges it. Delivery is therefore **at least once**: after
@@ -38,6 +45,8 @@ that is still in the spool.
 ## Run
 
 ```bash
+cargo install radiochron-agent
+
 cargo build --release
 sudo install -m 0755 target/release/radiochron-agent target/release/radiochron-agent-update /usr/local/bin/
 
@@ -94,6 +103,26 @@ Set any of these to record the full network chain at
 | `RADIOCHRON_QUALITY_ATTEMPTS` | `4` | Samples per quality diagnosis (1..20 in core) |
 | `RADIOCHRON_CONNECTIVITY_TIMEOUT_MS` | `3000` | Per-target timeout |
 
+### Bluetooth LE collection
+
+BLE collection is opt-in so an unattended deployment never starts a radio scan
+without explicit configuration:
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `RADIOCHRON_BLE_SCAN_SECONDS` | `0` | Interval between scans; `0` disables BLE |
+| `RADIOCHRON_BLE_WINDOW_MS` | `4000` | Bounded scan window, 500..30000 ms |
+| `RADIOCHRON_BLE_ZONE` | unset | Caller-owned logical sensor zone |
+| `RADIOCHRON_BLE_MOVEMENT_SESSION` | unset | Caller-owned movement segment for co-travel evidence |
+| `RADIOCHRON_BLE_SENSOR_MOVING` | `false` | Whether the sensor is moving |
+
+The same settings can be delivered in a signed fleet profile as
+`ble_scan_seconds`, `ble_window_ms`, `ble_zone`,
+`ble_movement_session`, and `ble_sensor_moving`. The scanner never connects to
+unrelated peripherals or enumerates private GATT data. Linux requires BlueZ
+and system D-Bus access; macOS app bundles require
+`NSBluetoothAlwaysUsageDescription` and user Bluetooth permission.
+
 Radio, authentication/association, exact IP assignment evidence, gateway, DNS,
 TCP, captive portal, TLS certificate, packet-quality and Internet are reported
 separately. Windows uses IP Helper's DHCP flag, macOS uses
@@ -123,8 +152,9 @@ On Unix systems the spool, per-device credential and fleet signing state are
 created with owner-only directory/file permissions. Downloaded OTA artifacts
 receive an owner execute bit before the atomic swap.
 
-Prometheus exposes counters for recorded/exported/failed/dropped events, spool
-depth, and `radiochron_connectivity_stage{layer=...}`. Stage values are `1`
+Prometheus exposes counters for recorded/exported/failed/dropped events, BLE
+observations/findings, spool depth, and
+`radiochron_connectivity_stage{layer=...}`. Stage values are `1`
 pass, `0` fail, `-1` unknown and `-2` skipped. Prometheus is aggregate state;
 it does not acknowledge or delete chronicle events.
 
@@ -194,7 +224,8 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-MSRV is Rust 1.80. This repository has not been released yet.
+MSRV is Rust 1.80. Release `0.2.0` tracks the published `radiochron` core
+`0.4.0`; Cargo.lock fixes the complete daemon dependency graph.
 
 ## License
 

@@ -1,3 +1,5 @@
+mod ble_collector;
+mod ble_scan;
 mod collector;
 mod config;
 mod export;
@@ -68,10 +70,11 @@ fn main() -> anyhow::Result<()> {
     let mut exporters = build_exporters(&config, &tls)?;
     if config_check {
         println!(
-            "configuration valid: device={} event_exporters={} connectivity={}",
+            "configuration valid: device={} event_exporters={} connectivity={} ble={}",
             config.device_id,
             exporters.len(),
-            config.connectivity.is_some()
+            config.connectivity.is_some(),
+            config.ble.is_some()
         );
         return Ok(());
     }
@@ -91,6 +94,7 @@ fn main() -> anyhow::Result<()> {
     let collector = AgentCollector::new(
         config.connectivity.clone(),
         config.connectivity_interval,
+        config.ble.clone(),
         tls.clone(),
     );
     let identity = ChronicleIdentity {
@@ -172,7 +176,7 @@ fn build_exporters(config: &Config, tls: &TlsConnector) -> anyhow::Result<Vec<Bo
 
 fn print_help() {
     println!(
-        "radiochron-agent — durable Wi-Fi chronicle daemon\n\n\
+        "radiochron-agent - durable Wi-Fi and BLE chronicle daemon\n\n\
          Usage: radiochron-agent [--once|--fleet-sync|--config-check|--request-location|--version]\n\n\
          Configure with RADIOCHRON_* environment variables; see README.md."
     );

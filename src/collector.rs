@@ -5,6 +5,7 @@ use radiochron::chronicle::{
 };
 use radiochron::connectivity::ConnectivityConfig;
 
+use crate::ble_collector::{BleCollector, BleOptions};
 use crate::transport::TlsConnector;
 
 pub struct AgentCollector {
@@ -12,6 +13,7 @@ pub struct AgentCollector {
     connectivity: Option<ConnectivityConfig>,
     connectivity_interval: Duration,
     last_connectivity: Option<Instant>,
+    ble: Option<BleCollector>,
     tls: TlsConnector,
 }
 
@@ -19,6 +21,7 @@ impl AgentCollector {
     pub fn new(
         connectivity: Option<ConnectivityConfig>,
         connectivity_interval: Duration,
+        ble: Option<BleOptions>,
         tls: TlsConnector,
     ) -> Self {
         Self {
@@ -26,6 +29,7 @@ impl AgentCollector {
             connectivity,
             connectivity_interval,
             last_connectivity: None,
+            ble: ble.map(BleCollector::new),
             tls,
         }
     }
@@ -76,6 +80,9 @@ impl Collector for AgentCollector {
                 });
                 self.last_connectivity = Some(Instant::now());
             }
+        }
+        if let Some(ble) = &mut self.ble {
+            events.extend(ble.collect_events()?);
         }
         Ok(events)
     }

@@ -1,5 +1,5 @@
 [Unit]
-Description=RadioChron Wi-Fi telemetry agent
+Description=RadioChron Wi-Fi and BLE telemetry agent
 After=network.target
 
 [Service]

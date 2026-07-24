@@ -11,6 +11,8 @@ pub struct Metrics {
     export_failures: AtomicU64,
     spool_dropped: AtomicU64,
     spool_depth: AtomicU64,
+    ble_observations: AtomicU64,
+    ble_findings: AtomicU64,
     radio: AtomicI64,
     authentication: AtomicI64,
     dhcp: AtomicI64,
@@ -30,6 +32,8 @@ pub struct MetricsSnapshot {
     pub export_failures: u64,
     pub spool_dropped: u64,
     pub spool_depth: u64,
+    pub ble_observations: u64,
+    pub ble_findings: u64,
     pub stages: std::collections::BTreeMap<&'static str, i64>,
 }
 
@@ -41,6 +45,8 @@ impl Default for Metrics {
             export_failures: AtomicU64::new(0),
             spool_dropped: AtomicU64::new(0),
             spool_depth: AtomicU64::new(0),
+            ble_observations: AtomicU64::new(0),
+            ble_findings: AtomicU64::new(0),
             radio: AtomicI64::new(-1),
             authentication: AtomicI64::new(-1),
             dhcp: AtomicI64::new(-1),
@@ -58,23 +64,32 @@ impl Default for Metrics {
 impl Metrics {
     pub fn record_entry(&self, entry: &Entry) {
         self.events_recorded.fetch_add(1, Ordering::Relaxed);
-        if let EntryKind::Connectivity { report } = &entry.kind {
-            self.radio
-                .store(code(report.radio.status), Ordering::Relaxed);
-            self.authentication
-                .store(code(report.authentication.status), Ordering::Relaxed);
-            self.dhcp.store(code(report.dhcp.status), Ordering::Relaxed);
-            self.dns.store(code(report.dns.status), Ordering::Relaxed);
-            self.tcp.store(code(report.tcp.status), Ordering::Relaxed);
-            self.gateway
-                .store(code(report.gateway.status), Ordering::Relaxed);
-            self.captive_portal
-                .store(code(report.captive_portal.status), Ordering::Relaxed);
-            self.tls.store(code(report.tls.status), Ordering::Relaxed);
-            self.packet_quality
-                .store(code(report.packet_quality.status), Ordering::Relaxed);
-            self.internet
-                .store(code(report.internet.status), Ordering::Relaxed);
+        match &entry.kind {
+            EntryKind::Connectivity { report } => {
+                self.radio
+                    .store(code(report.radio.status), Ordering::Relaxed);
+                self.authentication
+                    .store(code(report.authentication.status), Ordering::Relaxed);
+                self.dhcp.store(code(report.dhcp.status), Ordering::Relaxed);
+                self.dns.store(code(report.dns.status), Ordering::Relaxed);
+                self.tcp.store(code(report.tcp.status), Ordering::Relaxed);
+                self.gateway
+                    .store(code(report.gateway.status), Ordering::Relaxed);
+                self.captive_portal
+                    .store(code(report.captive_portal.status), Ordering::Relaxed);
+                self.tls.store(code(report.tls.status), Ordering::Relaxed);
+                self.packet_quality
+                    .store(code(report.packet_quality.status), Ordering::Relaxed);
+                self.internet
+                    .store(code(report.internet.status), Ordering::Relaxed);
+            }
+            EntryKind::BleObservation { .. } => {
+                self.ble_observations.fetch_add(1, Ordering::Relaxed);
+            }
+            EntryKind::BleFinding { .. } => {
+                self.ble_findings.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
         }
     }
 
@@ -125,6 +140,16 @@ impl Metrics {
             "radiochron_spool_depth",
             self.spool_depth.load(Ordering::Relaxed) as i64,
         );
+        counter(
+            &mut out,
+            "radiochron_ble_observations_total",
+            self.ble_observations.load(Ordering::Relaxed),
+        );
+        counter(
+            &mut out,
+            "radiochron_ble_findings_total",
+            self.ble_findings.load(Ordering::Relaxed),
+        );
         for (layer, value) in [
             ("radio", self.radio.load(Ordering::Relaxed)),
             (
@@ -161,6 +186,8 @@ impl Metrics {
             export_failures: self.export_failures.load(Ordering::Relaxed),
             spool_dropped: self.spool_dropped.load(Ordering::Relaxed),
             spool_depth: self.spool_depth.load(Ordering::Relaxed),
+            ble_observations: self.ble_observations.load(Ordering::Relaxed),
+            ble_findings: self.ble_findings.load(Ordering::Relaxed),
             stages: [
                 ("radio", self.radio.load(Ordering::Relaxed)),
                 (
@@ -218,6 +245,7 @@ mod tests {
         metrics.set_spool_depth(3);
         let text = metrics.render();
         assert!(text.contains("radiochron_events_exported_total 1"));
+        assert!(text.contains("radiochron_ble_observations_total 0"));
         assert!(text.contains("radiochron_spool_depth 3"));
     }
 }
