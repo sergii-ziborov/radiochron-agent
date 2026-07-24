@@ -27,6 +27,11 @@ radiochron = { version = "=0.4.0", default-features = false, features = ["status
 tokio = { version = "1.44", features = ["macros", "rt", "time"] }
 uuid = "=1.18.1"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# btleplug accepts bluez-async 0.8; 0.8.1+ switched its manifest to edition
+# 2024, which Cargo 1.80 cannot parse. Keep the daemon's declared Linux MSRV.
+bluez-async = "=0.8.0"
+
 [profile.release]
 lto = "thin"
 strip = true
