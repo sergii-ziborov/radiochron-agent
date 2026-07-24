@@ -227,6 +227,11 @@ cargo test
 MSRV is Rust 1.80. Release `0.2.0` tracks the published `radiochron` core
 `0.4.0`; Cargo.lock fixes the complete daemon dependency graph.
 
+Future crates.io releases are tag-driven. A `v<package-version>` tag runs the
+full Linux release gate and publishes through the protected `crates-io`
+GitHub environment. `CARGO_REGISTRY_TOKEN` belongs in that environment's
+Actions secrets, never in source, workflow YAML or build artifacts.
+
 ## License
 
 [MIT](LICENSE)
