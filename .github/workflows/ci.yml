@@ -28,6 +28,12 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
       - run: cargo fmt --check
+      - name: Enforce Tokio-free agent boundary
+        run: >-
+          python -c "import json,subprocess;
+          names={p['name'] for p in json.loads(subprocess.check_output(['cargo','metadata','--locked','--format-version','1']))['packages']};
+          bad=sorted(names & {'tokio','btleplug','futures'});
+          assert not bad, f'forbidden runtime dependencies: {bad}'"
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
 

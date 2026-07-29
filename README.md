@@ -224,8 +224,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-MSRV is Rust 1.80. Release `0.2.0` tracks the published `radiochron` core
-`0.4.0`; Cargo.lock fixes the complete daemon dependency graph.
+MSRV is Rust 1.80. Release `0.3.0` tracks the published `radiochron` core
+`0.5.0` and uses the Tokio-free `radiochron-native-ble` OS backend;
+Cargo.lock fixes the complete daemon dependency graph.
 
 Future crates.io releases are tag-driven. A `v<package-version>` tag runs the
 full Linux release gate and publishes through the protected `crates-io`
