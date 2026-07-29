@@ -53,7 +53,7 @@ impl BleCollector {
             let rssi_dbm = advertisement.rssi_dbm;
             let result = self.tracker.observe(Observation {
                 monotonic_ms,
-                unix_epoch_ms: Some(scan.observed_at_epoch_ms as i64),
+                unix_epoch_ms: Some(scan.observed_at_epoch_ms),
                 context: context.clone(),
                 advertisement,
             });
